@@ -41,7 +41,7 @@ function App(){
  const [liked,setLiked]=useState(()=>new Set(JSON.parse(localStorage.getItem('chintu-liked')||'[]')));
  const [playlists,setPlaylists]=useState(()=>JSON.parse(localStorage.getItem('chintu-playlists')||'[]'));
  const [showCreate,setShowCreate]=useState(false),[newPlaylist,setNewPlaylist]=useState('');
- const audio=useRef(null),fileInput=useRef(null),pendingPlay=useRef(false),urls=useRef(new Set());
+ const audio=useRef(null),fileInput=useRef(null),urls=useRef(new Set());
  const tracks=useMemo(()=>[...local,...demo],[local]);
  const filtered=tracks.filter(t=>`${t.title} ${t.artist} ${t.album}`.toLowerCase().includes(query.toLowerCase()));
 
@@ -49,16 +49,47 @@ function App(){
  useEffect(()=>{localStorage.setItem('chintu-playlists',JSON.stringify(playlists));},[playlists]);
  useEffect(()=>{let alive=true;(async()=>{try{const rows=await dbGetAll();if(!alive)return;const hydrated=rows.map(r=>{const src=URL.createObjectURL(r.blob);urls.current.add(src);return {...r,src};});setLocal(hydrated);}catch(err){console.error('Library restore failed',err);}finally{if(alive)setLibraryReady(true);}})();return()=>{alive=false;for(const u of urls.current)URL.revokeObjectURL(u);urls.current.clear();};},[]);
  useEffect(()=>{if(audio.current)audio.current.volume=volume;},[volume]);
- useEffect(()=>{const a=audio.current;if(!a)return;a.pause();setPlaying(false);setTime(0);setDuration(0);pendingPlay.current=Boolean(current.src);if(current.src){a.src=current.src;a.load();}else a.removeAttribute('src');},[current]);
- useEffect(()=>{if(!('mediaSession' in navigator))return;try{navigator.mediaSession.metadata=new MediaMetadata({title:current.title,artist:current.artist,album:current.album});const safe=(name,fn)=>{try{navigator.mediaSession.setActionHandler(name,fn);}catch{}};safe('play',()=>audio.current?.play().catch(()=>{}));safe('pause',()=>audio.current?.pause());safe('previoustrack',prev);safe('nexttrack',next);safe('seekbackward',()=>seekBy(-10));safe('seekforward',()=>seekBy(10));safe('seekto',d=>{if(audio.current&&Number.isFinite(d.seekTime))audio.current.currentTime=d.seekTime;});}catch{}},[current,shuffle,repeat,tracks,time]);
+ useEffect(()=>{if(!('mediaSession' in navigator))return;try{navigator.mediaSession.metadata=new MediaMetadata({title:current.title,artist:current.artist,album:current.album});const safe=(name,fn)=>{try{navigator.mediaSession.setActionHandler(name,fn);}catch{}};safe('play',()=>audio.current?.play().catch(()=>{}));safe('pause',()=>audio.current?.pause());safe('previoustrack',prev);safe('nexttrack',next);safe('seekbackward',()=>seekBy(-10));safe('seekforward',()=>seekBy(10));safe('seekto',d=>{if(audio.current&&Number.isFinite(d.seekTime))audio.current.currentTime=d.seekTime;});}catch{}},[current,shuffle,repeat,tracks]);
 
- function play(t){
-   if(t.src && current.id===t.id){const a=audio.current;if(playing)a?.pause();else a?.play().catch(err=>console.error('Playback failed',err));setFullPlayer(false);return;}
-   pendingPlay.current=Boolean(t.src);
-   setCurrent(t);setFullPlayer(false);
+ function startTrack(t){
+   const a=audio.current;
+   if(!a || !t?.src)return;
+   try{
+     a.pause();
+     a.src=t.src;
+     a.currentTime=0;
+     a.load();
+     setCurrent(t);
+     setTime(0);
+     setDuration(0);
+     const promise=a.play();
+     if(promise?.catch)promise.catch(err=>{console.error('Playback failed',err);setPlaying(false);});
+   }catch(err){console.error('Audio setup failed',err);setPlaying(false);}
  }
- function next(){if(!tracks.length)return;const i=tracks.findIndex(t=>t.id===current.id);const n=shuffle?tracks[Math.floor(Math.random()*tracks.length)]:tracks[(i+1)%tracks.length];play(n);}
- function prev(){if(time>4){if(audio.current)audio.current.currentTime=0;return;}const i=tracks.findIndex(t=>t.id===current.id);play(tracks[(i-1+tracks.length)%tracks.length]);}
+ function play(t){
+   if(!t?.src)return;
+   const a=audio.current;
+   if(current.id===t.id){
+     if(playing)a?.pause();
+     else a?.play().catch(err=>console.error('Playback failed',err));
+     setFullPlayer(false);
+     return;
+   }
+   startTrack(t);
+   setFullPlayer(false);
+ }
+ function next(){
+   if(!tracks.length)return;
+   const i=Math.max(0,tracks.findIndex(t=>t.id===current.id));
+   const n=shuffle?tracks[Math.floor(Math.random()*tracks.length)]:tracks[(i+1)%tracks.length];
+   if(n?.src)startTrack(n);
+ }
+ function prev(){
+   if(time>4){if(audio.current)audio.current.currentTime=0;return;}
+   const i=Math.max(0,tracks.findIndex(t=>t.id===current.id));
+   const p=tracks[(i-1+tracks.length)%tracks.length];
+   if(p?.src)startTrack(p);
+ }
  function seekBy(d){const a=audio.current;if(a&&Number.isFinite(a.duration))a.currentTime=Math.max(0,Math.min(a.duration,a.currentTime+d));}
  function openImporter(){fileInput.current?.click();}
  async function importMusic(e){
@@ -74,7 +105,6 @@ function App(){
        arr.push(item);
      }
      setLocal(p=>[...arr,...p]);
-     setCurrent(arr[0]);
      setTab('Library');
    }catch(err){console.error('Music import failed',err);alert('Music import failed. Please try the file again.');}
    finally{e.target.value='';}
@@ -99,7 +129,7 @@ function App(){
   <footer className="playerBar"><button className="now clickable" onClick={()=>setFullPlayer(true)}><div className="mini" style={{background:current.color}}>{current.title[0]}</div><div><b>{current.title}</b><small>{current.artist}</small></div></button><div className="controls"><div className="buttons"><button className={shuffle?'on':''} onClick={()=>setShuffle(!shuffle)}><Shuffle size={16}/></button><button onClick={prev}><SkipBack size={19}/></button><button className="play" onClick={()=>{if(!current.src)return;if(playing)audio.current?.pause();else audio.current?.play().catch(()=>{});}}>{playing?<Pause size={18}/>:<Play size={18}/>}</button><button onClick={next}><SkipForward size={19}/></button><button className={repeat?'on':''} onClick={()=>setRepeat(!repeat)}><Repeat2 size={16}/></button></div><div className="progress"><span>{fmt(time)}</span><input type="range" min="0" max={duration||0} value={Math.min(time,duration||0)} onChange={e=>{const v=Number(e.target.value);if(audio.current)audio.current.currentTime=v;setTime(v);}}/><span>{fmt(duration)}</span></div></div><div className="volume"><Volume2 size={17}/><input type="range" min="0" max="1" step="0.01" value={volume} onChange={e=>setVolume(Number(e.target.value))}/></div></footer>
   {fullPlayer&&<div className="playerOverlay" onClick={()=>setFullPlayer(false)}><section className="fullPlayer" onClick={e=>e.stopPropagation()}><button className="closePlayer" onClick={()=>setFullPlayer(false)}><ChevronDown/></button><div className="bigCover" style={{background:current.color}}><span>{current.title[0]}</span></div><div className="fullMeta"><div><p>{current.artist}</p><h2>{current.title}</h2><span>{current.album}</span></div><button onClick={()=>toggleLike(current.id)}>{liked.has(current.id)?<Heart fill="currentColor"/>:<Heart/>}</button></div><div className="seek"><input type="range" min="0" max={duration||0} value={Math.min(time,duration||0)} onChange={e=>{const v=Number(e.target.value);if(audio.current)audio.current.currentTime=v;setTime(v);}}/><div><span>{fmt(time)}</span><span>{fmt(duration)}</span></div></div><div className="fullControls"><button className={shuffle?'on':''} onClick={()=>setShuffle(!shuffle)}><Shuffle/></button><button onClick={prev}><SkipBack/></button><button className="bigPlay" onClick={()=>{if(!current.src)return;if(playing)audio.current?.pause();else audio.current?.play().catch(()=>{});}}>{playing?<Pause fill="currentColor"/>:<Play fill="currentColor"/>}</button><button onClick={next}><SkipForward/></button><button className={repeat?'on':''} onClick={()=>setRepeat(!repeat)}><Repeat2/></button></div><button className="queueBtn" onClick={()=>{setFullPlayer(false);setShowCreate(true);}}><Plus size={17}/> Add current song to a playlist</button></section></div>}
   {showCreate&&<div className="modalShade" onClick={()=>setShowCreate(false)}><div className="modal" onClick={e=>e.stopPropagation()}><button className="modalClose" onClick={()=>setShowCreate(false)}><X/></button><p className="eyebrow">YOUR COLLECTION</p><h2>Create playlist</h2><input autoFocus value={newPlaylist} onChange={e=>setNewPlaylist(e.target.value)} onKeyDown={e=>e.key==='Enter'&&createPlaylist()} placeholder="Playlist name"/><button className="primary modalCreate" onClick={createPlaylist}><Plus size={17}/> Create playlist</button></div></div>}
-  <audio ref={audio} preload="metadata" playsInline onCanPlay={()=>{if(pendingPlay.current){pendingPlay.current=false;audio.current?.play().catch(err=>console.error('Playback failed',err));}}} onLoadedMetadata={()=>setDuration(audio.current?.duration||0)} onTimeUpdate={()=>setTime(audio.current?.currentTime||0)} onEnded={onEnded} onPlay={()=>{setPlaying(true);if('mediaSession' in navigator)navigator.mediaSession.playbackState='playing';}} onPause={()=>{setPlaying(false);if('mediaSession' in navigator)navigator.mediaSession.playbackState='paused';}} onError={()=>{pendingPlay.current=false;setPlaying(false);}}/>
+  <audio ref={audio} preload="metadata" playsInline onLoadedMetadata={()=>setDuration(audio.current?.duration||0)} onTimeUpdate={()=>setTime(audio.current?.currentTime||0)} onEnded={onEnded} onPlay={()=>{setPlaying(true);if('mediaSession' in navigator)navigator.mediaSession.playbackState='playing';}} onPause={()=>{setPlaying(false);if('mediaSession' in navigator)navigator.mediaSession.playbackState='paused';}} onError={()=>{setPlaying(false);console.error('Audio element error');}}/>
  </div>;
 }
 function HomePage({tracks,current,playing,play,liked,like,add,setTab,openImporter}){return <section className="content"><div className="hero"><div><p className="eyebrow">YOUR SOUND. YOUR SPACE.</p><h1>Music,<br/><em>your way.</em></h1><p className="sub">A premium personal player for your own collection, designed for effortless listening online and offline.</p><div className="actions"><button className="primary" onClick={openImporter}><Upload size={17}/> Import music</button><button className="ghost" onClick={()=>tracks[0]&&play(tracks[0])}><Play size={17}/> Start listening</button></div></div><div className="orb"><span>♪</span></div></div><div className="titleRow"><h2>Recently played</h2><button onClick={()=>setTab('Library')}>View library</button></div><div className="cards">{tracks.slice(0,5).map(t=><article key={t.id}><div className="cover" style={{background:t.color}}><span>{t.title[0]}</span><button onClick={()=>play(t)}>{current.id===t.id&&playing?<Pause size={18}/>:<Play size={18}/>}</button></div><h3>{t.title}</h3><p>{t.artist}</p></article>)}</div><div className="titleRow"><h2>Made for your mood</h2><MoreHorizontal size={18}/></div><div className="trackList">{tracks.slice(0,3).map(t=><Track key={t.id} t={t} current={current} playing={playing} play={play} liked={liked.has(t.id)} like={like} add={add}/>)}</div></section>}
