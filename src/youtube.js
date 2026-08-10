@@ -3,7 +3,11 @@ const API = 'https://www.googleapis.com/youtube/v3/search';
 export async function searchYouTube(query, maxResults = 20) {
   const key = import.meta.env.VITE_YOUTUBE_API_KEY;
   const q = query.trim();
-  if (!key || !q) return [];
+
+  if (!key) {
+    throw new Error('YouTube API key is missing: VITE_YOUTUBE_API_KEY is not available in this build.');
+  }
+  if (!q) return [];
 
   const params = new URLSearchParams({
     part: 'snippet',
@@ -14,23 +18,42 @@ export async function searchYouTube(query, maxResults = 20) {
     key,
   });
 
-  const response = await fetch(`${API}?${params.toString()}`);
-  if (!response.ok) {
-    const body = await response.text().catch(() => '');
-    throw new Error(`YouTube search failed (${response.status}) ${body}`);
+  let response;
+  try {
+    response = await fetch(`${API}?${params.toString()}`);
+  } catch (error) {
+    throw new Error(`Could not reach YouTube API: ${error?.message || 'network error'}`);
   }
 
-  const data = await response.json();
-  return (data.items || []).map((item) => ({
-    id: `youtube-${item.id.videoId}`,
-    source: 'youtube',
-    videoId: item.id.videoId,
-    title: item.snippet.title,
-    artist: item.snippet.channelTitle,
-    album: 'YouTube',
-    color: '#111827',
-    cover: item.snippet.thumbnails?.high?.url || item.snippet.thumbnails?.medium?.url || item.snippet.thumbnails?.default?.url || '',
-    src: '',
-    url: `https://www.youtube.com/watch?v=${item.id.videoId}`,
-  }));
+  const bodyText = await response.text().catch(() => '');
+  if (!response.ok) {
+    let detail = bodyText;
+    try {
+      const parsed = JSON.parse(bodyText);
+      detail = parsed?.error?.message || detail;
+    } catch {}
+    throw new Error(`YouTube API error ${response.status}: ${detail || 'request failed'}`);
+  }
+
+  let data;
+  try {
+    data = JSON.parse(bodyText);
+  } catch {
+    throw new Error('YouTube API returned an invalid response.');
+  }
+
+  return (data.items || [])
+    .filter(item => item?.id?.videoId)
+    .map((item) => ({
+      id: `youtube-${item.id.videoId}`,
+      source: 'youtube',
+      videoId: item.id.videoId,
+      title: item.snippet.title,
+      artist: item.snippet.channelTitle,
+      album: 'YouTube',
+      color: '#111827',
+      cover: item.snippet.thumbnails?.high?.url || item.snippet.thumbnails?.medium?.url || item.snippet.thumbnails?.default?.url || '',
+      src: '',
+      url: `https://www.youtube.com/watch?v=${item.id.videoId}`,
+    }));
 }
