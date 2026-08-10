@@ -3,7 +3,7 @@ name: Build Chintu Music APK
 on:
   workflow_dispatch:
   push:
-    branches: [ main ]
+    branches: [ main, feature/youtube-integration ]
 
 jobs:
   build-apk:
@@ -13,6 +13,7 @@ jobs:
     env:
       VITE_SPOTIFY_CLIENT_ID: ${{ secrets.SPOTIFY_CLIENT_ID }}
       VITE_SPOTIFY_REDIRECT_URI: ${{ secrets.SPOTIFY_REDIRECT_URI }}
+      VITE_YOUTUBE_API_KEY: ${{ secrets.VITE_YOUTUBE_API_KEY }}
 
     steps:
       - name: Checkout
